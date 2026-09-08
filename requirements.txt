@@ -8,3 +8,4 @@ requests>=2.31.0
 validators>=0.22.0
 tldextract>=5.1.0
 python-dotenv>=1.0.0
+argon2-cffi>=23.1.0

@@ -22,12 +22,11 @@ history log, and a simple cybersecurity FAQ chatbot.
 
 ```
 CyberShield-AI/
-├── app.py                  # Main entry point (Streamlit)
-├── chatbot/                # Rule-based FAQ chatbot
+├── app.py                  # Single-file entry point: all pages + sidebar router (Streamlit)
+├── chatbot/                # FAQ chatbot (rule-based, or Gemini-backed if configured)
 ├── database/                # SQLite setup + user/history queries
 ├── dataset/                  # Training data (phishing.csv)
 ├── models/                   # Trained model + vectorizer (.pkl) + training script
-├── pages/                    # Streamlit multipage app screens
 ├── prediction/                # Feature extraction + prediction logic
 ├── security/                  # SSL / WHOIS / VirusTotal checks
 ├── utils/                     # Shared helpers
@@ -68,13 +67,25 @@ CyberShield-AI/
    Get a free key at https://www.virustotal.com/gui/join-us. Without a key, the app
    will simply skip the VirusTotal check and rely on the ML model + SSL/WHOIS checks.
 
-5. **Run the app:**
+5. **(Optional) Enable the AI-powered chatbot (Gemini)** — add to the same `.env` file:
+
+   ```
+   GEMINI_API_KEY=your_key_here
+   GEMINI_MODEL=gemini-2.0-flash   # optional, this is the default
+   ```
+
+   Get a free key at https://aistudio.google.com/apikey. Without a key, the chatbot
+   falls back to the built-in rule-based FAQ matcher (chatbot/intents.json) — same
+   graceful-degradation pattern as the VirusTotal check above.
+
+6. **Run the app:**
 
    ```bash
    streamlit run app.py
    ```
 
-   Streamlit will auto-discover the pages in `pages/` and show them in the sidebar.
+   Navigation between Home / Login / Register / Dashboard / History / Profile / About
+   is handled by a sidebar radio inside `app.py` itself (no separate `pages/` folder).
 
 ## Notes
 

@@ -1,12 +1,13 @@
 """
 Shared helper utilities used across the CyberShield-AI app.
 """
-import hashlib
 import re
 import logging
 from urllib.parse import urlparse
 
 import validators
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHash
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,20 +46,39 @@ def extract_domain(url: str) -> str:
     return parsed.netloc or parsed.path
 
 
-def hash_password(password: str, salt: str = "cybershield_ai") -> str:
-    """Hash a password with SHA-256 and a static salt (simple, no external deps).
-
-    Note: for a production system, use a dedicated library like `bcrypt` or
-    `argon2-cffi` with a per-user random salt. This keeps the project
-    dependency-light for coursework/demo purposes.
-    """
-    salted = f"{salt}:{password}".encode("utf-8")
-    return hashlib.sha256(salted).hexdigest()
+def is_valid_email(email: str) -> bool:
+    """Check whether the given string is a syntactically valid email address."""
+    if not email or not isinstance(email, str):
+        return False
+    return bool(validators.email(email.strip()))
 
 
-def verify_password(password: str, hashed: str, salt: str = "cybershield_ai") -> bool:
-    """Verify a plaintext password against a stored hash."""
-    return hash_password(password, salt) == hashed
+# ---------------- Password hashing (Argon2id) ---------------- #
+#
+# Argon2id is the OWASP-recommended password hashing algorithm: it is
+# deliberately slow (memory-hard), and PasswordHasher() generates a unique
+# random salt per call automatically — unlike a bare SHA-256 hash, which is
+# fast to compute (bad for passwords) and, if a static salt is reused across
+# every user, means one leaked salt weakens every account at once.
+
+_ph = PasswordHasher()  # sensible defaults: time_cost=3, memory_cost=64MB, parallelism=4
+
+
+def hash_password(password: str) -> str:
+    """Hash a password with Argon2id. Returns an encoded hash string that
+    already embeds the algorithm parameters and a random salt — nothing
+    else needs to be stored alongside it."""
+    return _ph.hash(password)
+
+
+def verify_password(password: str, hashed: str) -> bool:
+    """Verify a plaintext password against a stored Argon2id hash.
+    Returns False (rather than raising) on a wrong password, a corrupted
+    hash, or a hash produced by a different/older scheme."""
+    try:
+        return _ph.verify(hashed, password)
+    except (VerifyMismatchError, VerificationError, InvalidHash):
+        return False
 
 
 def risk_label(score: float) -> str:
