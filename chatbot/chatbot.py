@@ -48,16 +48,24 @@ GEMINI_URL = (
 SYSTEM_PROMPT = (
     "You are the built-in cybersecurity assistant inside CyberShield-AI, a "
     "phishing-detection web app. Answer any question related to "
-    "cybersecurity — including but not limited to phishing, malware, "
-    "ransomware, spyware, viruses, network security, firewalls, VPNs, "
-    "encryption, SSL/TLS, WHOIS/domain reputation, social engineering, "
-    "password security, authentication (2FA/MFA), data breaches, ethical "
-    "hacking/penetration testing concepts, cybersecurity careers, and "
-    "general online-safety practices. Keep answers concise (2-5 sentences "
-    "unless the user asks for more detail), practical, and "
-    "beginner-friendly. If a question is clearly unrelated to cybersecurity "
-    "or online safety (e.g. cooking, sports, general trivia), politely "
-    "redirect the user back to those topics instead of answering it."
+    "cybersecurity, at a conceptual/educational level — including but not "
+    "limited to: attack types and their patterns (phishing, malware, "
+    "ransomware, spyware, viruses, worms, DDoS, SQL injection, XSS, "
+    "man-in-the-middle, social engineering, zero-days); well-known security "
+    "tools and what they're used for (Nmap, Wireshark, Metasploit, Burp "
+    "Suite, Nessus, John the Ripper, Kali Linux); frameworks and standards "
+    "(OWASP Top 10, MITRE ATT&CK, NIST, CVE/CWE); network and infra security "
+    "(firewalls, VPNs, IDS/IPS, encryption, SSL/TLS); identity and access "
+    "(passwords, 2FA/MFA, authentication); incident response and threat "
+    "actors; WHOIS/domain reputation; and cybersecurity career/certification "
+    "guidance. Explain how attacks and tools work conceptually so the user "
+    "understands and can defend against them — do not provide step-by-step "
+    "exploit code, working malware, or specific attack instructions against "
+    "a real, named target. Keep answers concise (2-5 sentences unless the "
+    "user asks for more detail), practical, and beginner-friendly. If a "
+    "question is clearly unrelated to cybersecurity or online safety (e.g. "
+    "cooking, sports, general trivia), politely redirect the user back to "
+    "those topics instead of answering it."
 )
 
 
@@ -114,10 +122,16 @@ def _rule_based_response(user_input: str) -> str:
 
 # ---------------- Gemini-backed responder (optional) ---------------- #
 
+_last_gemini_error: Optional[str] = None  # for temporary CHATBOT_DEBUG diagnostics
+
+
 def _gemini_response(user_input: str, timeout: float = 15.0) -> Optional[str]:
     """Call the Gemini API. Returns None on any failure so the caller can
     fall back to the rule-based matcher instead of erroring out."""
+    global _last_gemini_error
+
     if not GEMINI_API_KEY:
+        _last_gemini_error = "GEMINI_API_KEY is not set in this environment"
         return None
 
     payload = {
@@ -150,17 +164,23 @@ def _gemini_response(user_input: str, timeout: float = 15.0) -> Optional[str]:
         candidates = data.get("candidates", [])
         if not candidates:
             logger.warning("Gemini returned no candidates for input: %r", user_input)
+            _last_gemini_error = f"200 OK but no candidates: {data}"
             return None
 
         parts = candidates[0].get("content", {}).get("parts", [])
         text = "".join(p.get("text", "") for p in parts).strip()
+        if not text:
+            _last_gemini_error = f"200 OK but empty text, parts={parts}"
         return text or None
 
     except requests.exceptions.RequestException as e:
         logger.warning("Gemini API call failed, falling back to rule-based: %s", e)
+        body = getattr(getattr(e, "response", None), "text", "")
+        _last_gemini_error = f"{e} | body={body[:300]}"
         return None
     except (KeyError, IndexError, ValueError) as e:
         logger.warning("Unexpected Gemini response shape, falling back: %s", e)
+        _last_gemini_error = f"Unexpected response shape: {e}"
         return None
 
 
@@ -181,4 +201,13 @@ def get_response(user_input: str) -> str:
             return ai_reply
         # fell through: key configured but call failed -> use rule-based
 
-    return _rule_based_response(user_input)
+    fallback_text = _rule_based_response(user_input)
+
+    # TEMPORARY diagnostic: set CHATBOT_DEBUG=1 as a secret/env var to see
+    # exactly why Gemini isn't being used, right inside the chat reply.
+    # Remove the CHATBOT_DEBUG secret once this is confirmed working.
+    if os.getenv("CHATBOT_DEBUG"):
+        key_status = "SET" if GEMINI_API_KEY else "NOT SET"
+        fallback_text += f"\n\n[DEBUG] GEMINI_API_KEY: {key_status} | last_error: {_last_gemini_error}"
+
+    return fallback_text
