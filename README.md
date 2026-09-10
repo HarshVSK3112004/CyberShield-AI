@@ -71,7 +71,7 @@ CyberShield-AI/
 
    ```
    GEMINI_API_KEY=your_key_here
-   GEMINI_MODEL=gemini-2.0-flash   # optional, this is the default
+   GEMINI_MODEL=gemini-3.6-flash   # optional, this is the default
    ```
 
    Get a free key at https://aistudio.google.com/apikey. Without a key, the chatbot
