@@ -9,3 +9,6 @@ validators>=0.22.0
 tldextract>=5.1.0
 python-dotenv>=1.0.0
 argon2-cffi>=23.1.0
+pyotp>=2.9.0
+qrcode>=7.4.0
+Pillow>=10.0.0

@@ -89,3 +89,53 @@ def risk_label(score: float) -> str:
         return "🟠 Medium Risk"
     else:
         return "🟢 Low Risk"
+
+
+# ---------------- Two-Factor Authentication (TOTP) ---------------- #
+#
+# Uses pyotp for standard Time-based One-Time Passwords, compatible with
+# Google Authenticator, Authy, Microsoft Authenticator, etc. No SMS/email
+# infrastructure needed — the secret is shared once via a QR code, and the
+# app + server independently compute the same 6-digit code every 30s.
+
+import io
+import pyotp
+import qrcode
+
+TOTP_ISSUER = "CyberShield-AI"
+
+
+def generate_totp_secret() -> str:
+    """Generate a new random base32 TOTP secret for a user."""
+    return pyotp.random_base32()
+
+
+def get_totp_uri(secret: str, email: str) -> str:
+    """Build the otpauth:// URI that authenticator apps read from a QR code."""
+    return pyotp.totp.TOTP(secret).provisioning_uri(name=email, issuer_name=TOTP_ISSUER)
+
+
+def generate_totp_qr_png(secret: str, email: str) -> bytes:
+    """Return PNG image bytes of a QR code encoding the TOTP provisioning URI."""
+    uri = get_totp_uri(secret, email)
+    img = qrcode.make(uri)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def verify_totp_code(secret: str, code: str) -> bool:
+    """Verify a 6-digit TOTP code against the stored secret.
+
+    valid_window=1 allows the immediately-preceding and following 30s code
+    to also pass, tolerating minor clock drift between server and phone.
+    """
+    if not secret or not code:
+        return False
+    code = code.strip()
+    if not code.isdigit() or len(code) != 6:
+        return False
+    try:
+        return pyotp.totp.TOTP(secret).verify(code, valid_window=1)
+    except Exception:
+        return False

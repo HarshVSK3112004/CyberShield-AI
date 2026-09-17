@@ -23,10 +23,15 @@ from database.db import (
     get_history,
     get_user_stats,
     get_auth_logs,
+    get_user_by_id,
+    set_pending_totp_secret,
+    enable_totp,
+    disable_totp,
+    complete_totp_login,
 )
 from prediction.predictor import predict
 from chatbot.chatbot import get_response
-from utils.helper import get_logger, is_valid_email
+from utils.helper import get_logger, is_valid_email, generate_totp_secret, generate_totp_qr_png, verify_totp_code, verify_password
 
 logger = get_logger(__name__)
 
@@ -77,6 +82,10 @@ if "page" not in st.session_state:
     st.session_state.page = "Home"
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "pending_totp_user_id" not in st.session_state:
+    st.session_state.pending_totp_user_id = None
+if "pending_totp_email" not in st.session_state:
+    st.session_state.pending_totp_email = None
 
 
 def go_to(page_name: str):
@@ -177,6 +186,37 @@ def page_login():
             st.rerun()
         return
 
+    # ---- Second step: 2FA code entry (only reached after a correct password) ----
+    if st.session_state.pending_totp_user_id:
+        st.info("🔐 Two-factor authentication is enabled on this account.")
+        with st.form("totp_login_form"):
+            code = st.text_input("Enter the 6-digit code from your authenticator app", max_chars=6)
+            submitted = st.form_submit_button("Verify Code")
+
+            if submitted:
+                result = complete_totp_login(
+                    st.session_state.pending_totp_user_id,
+                    code,
+                    st.session_state.pending_totp_email,
+                )
+                if result["status"] == "ok":
+                    user = result["user"]
+                    st.session_state.logged_in = True
+                    st.session_state.user = user
+                    st.session_state.pending_totp_user_id = None
+                    st.session_state.pending_totp_email = None
+                    st.success(f"Welcome back, {user['username']}!")
+                    go_to("Dashboard")
+                    st.rerun()
+                else:
+                    st.error("Invalid or expired code. Please try again.")
+
+        if st.button("Cancel"):
+            st.session_state.pending_totp_user_id = None
+            st.session_state.pending_totp_email = None
+            st.rerun()
+        return
+
     with st.form("login_form"):
         email = st.text_input("Email")
         password = st.text_input("Password", type="password")
@@ -192,6 +232,11 @@ def page_login():
                 st.success(f"Welcome back, {user['username']}!")
                 st.info("Head to the **Dashboard** from the sidebar to check a URL.")
                 go_to("Dashboard")
+                st.rerun()
+
+            elif result["status"] == "needs_totp":
+                st.session_state.pending_totp_user_id = result["user"]["id"]
+                st.session_state.pending_totp_email = email
                 st.rerun()
 
             elif result["status"] == "locked":
@@ -479,6 +524,72 @@ def page_profile():
 Your CyberShield AI account is active and functioning correctly.
 """
     )
+
+    st.divider()
+
+    st.subheader("🔑 Two-Factor Authentication (2FA)")
+
+    # Always refetch — session-stored user is a snapshot from login time
+    # and won't reflect a 2FA change made earlier in this same session.
+    fresh_user = get_user_by_id(user["id"])
+
+    if fresh_user["totp_enabled"]:
+        st.success("🟢 2FA is **enabled** on your account.")
+        st.caption("A 6-digit authenticator code is required every time you log in.")
+
+        with st.expander("Disable 2FA"):
+            st.warning("Disabling 2FA reduces your account's protection against password-only attacks.")
+            with st.form("disable_totp_form"):
+                confirm_password = st.text_input("Confirm your password to disable 2FA", type="password")
+                disable_submitted = st.form_submit_button("Disable 2FA")
+
+                if disable_submitted:
+                    if verify_password(confirm_password, fresh_user["password"]):
+                        disable_totp(user["id"])
+                        st.success("2FA has been disabled.")
+                        st.rerun()
+                    else:
+                        st.error("Incorrect password.")
+
+    else:
+        st.info("🔓 2FA is **not enabled**. Add an authenticator app for an extra layer of login security.")
+
+        if "totp_setup_secret" not in st.session_state:
+            st.session_state.totp_setup_secret = None
+
+        if st.session_state.totp_setup_secret is None:
+            if st.button("Set Up 2FA"):
+                secret = generate_totp_secret()
+                set_pending_totp_secret(user["id"], secret)
+                st.session_state.totp_setup_secret = secret
+                st.rerun()
+        else:
+            secret = st.session_state.totp_setup_secret
+            st.write(
+                "1. Scan this QR code with Google Authenticator, Authy, or a similar app "
+                "(or enter the key manually)."
+            )
+            qr_png = generate_totp_qr_png(secret, fresh_user["email"])
+            st.image(qr_png, width=220)
+            st.code(secret, language=None)
+
+            st.write("2. Enter the 6-digit code your app generates to confirm setup:")
+            with st.form("confirm_totp_form"):
+                confirm_code = st.text_input("6-digit code", max_chars=6)
+                confirm_submitted = st.form_submit_button("Verify & Enable 2FA")
+
+                if confirm_submitted:
+                    if verify_totp_code(secret, confirm_code):
+                        enable_totp(user["id"])
+                        st.session_state.totp_setup_secret = None
+                        st.success("✅ 2FA has been enabled on your account.")
+                        st.rerun()
+                    else:
+                        st.error("Incorrect code. Please try again.")
+
+            if st.button("Cancel setup"):
+                st.session_state.totp_setup_secret = None
+                st.rerun()
 
     st.divider()
 

@@ -2,7 +2,7 @@ import sqlite3
 import os
 from datetime import datetime, timedelta
 
-from utils.helper import hash_password, verify_password
+from utils.helper import hash_password, verify_password, verify_totp_code
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "database.db")
 
@@ -28,7 +28,9 @@ def init_db():
         email TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
         failed_attempts INTEGER NOT NULL DEFAULT 0,
-        locked_until TIMESTAMP
+        locked_until TIMESTAMP,
+        totp_secret TEXT,
+        totp_enabled INTEGER NOT NULL DEFAULT 0
     )
     """)
 
@@ -139,6 +141,15 @@ def verify_user(email, password):
             "UPDATE users SET failed_attempts=0, locked_until=NULL WHERE id=?",
             (user["id"],),
         )
+
+        if user["totp_enabled"]:
+            # Password correct, but 2FA is required before the login is
+            # complete — do not mark this as a full success yet.
+            _log_auth_event(cur, email, success=False, reason="password_ok_awaiting_totp")
+            conn.commit()
+            conn.close()
+            return {"status": "needs_totp", "user": user}
+
         _log_auth_event(cur, email, success=True)
         conn.commit()
         conn.close()
@@ -200,6 +211,88 @@ def reset_password(email, username, new_password):
     conn.commit()
     conn.close()
     return True, "Password reset successfully. You can now log in with your new password."
+
+
+# ---------------- Two-Factor Authentication (TOTP) ---------------- #
+
+def get_user_by_id(user_id):
+    """Fetch a fresh copy of a user row by id (used to refresh session state
+    after enabling/disabling 2FA, since st.session_state.user is a snapshot
+    taken at login time)."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE id=?", (user_id,))
+    user = cur.fetchone()
+    conn.close()
+    return user
+
+
+def set_pending_totp_secret(user_id, secret):
+    """Store a newly generated TOTP secret without enabling 2FA yet — used
+    while the user is mid-setup, before they've confirmed a valid code."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE users SET totp_secret=?, totp_enabled=0 WHERE id=?",
+        (secret, user_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def enable_totp(user_id):
+    """Turn on 2FA enforcement for this account (called after the user
+    proves they can generate a valid code from the secret)."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET totp_enabled=1 WHERE id=?", (user_id,))
+    conn.commit()
+    conn.close()
+
+
+def disable_totp(user_id):
+    """Turn off 2FA and clear the stored secret entirely."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE users SET totp_enabled=0, totp_secret=NULL WHERE id=?",
+        (user_id,),
+    )
+    conn.commit()
+    conn.close()
+
+
+def complete_totp_login(user_id, code, email):
+    """Second step of login when 2FA is enabled: verify the 6-digit code
+    against the user's stored secret. Returns a dict:
+      {"status": "ok", "user": <sqlite3.Row>}
+      {"status": "invalid"}
+    Logs the outcome to auth_logs either way.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT * FROM users WHERE id=?", (user_id,))
+    user = cur.fetchone()
+
+    if not user or not user["totp_secret"]:
+        conn.close()
+        return {"status": "invalid"}
+
+    if verify_totp_code(user["totp_secret"], code):
+        cur.execute(
+            "UPDATE users SET failed_attempts=0, locked_until=NULL WHERE id=?",
+            (user_id,),
+        )
+        _log_auth_event(cur, email, success=True, reason="totp_ok")
+        conn.commit()
+        conn.close()
+        return {"status": "ok", "user": user}
+
+    _log_auth_event(cur, email, success=False, reason="totp_invalid")
+    conn.commit()
+    conn.close()
+    return {"status": "invalid"}
 
 
 def get_auth_logs(email=None, limit=50):
