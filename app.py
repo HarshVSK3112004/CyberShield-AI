@@ -356,12 +356,36 @@ def page_dashboard():
                 result = predict(url)
 
             verdict = result["verdict"]
-            probability = result["probability"]
+            probability = result["probability"]  # raw phishing probability (0-1)
+
+            # "Confidence in the stated verdict" is not the same number as
+            # "phishing probability" — for a Legitimate verdict, confidence
+            # is how sure the model is it's NOT phishing (1 - phishing_proba),
+            # not the phishing score itself. Showing the raw phishing score
+            # next to "Legitimate Website" reads as self-contradictory
+            # (e.g. "Legitimate — Confidence: 79%" when 79% was actually how
+            # phishing-like the raw model found it, before any override).
+            confidence = probability if verdict == "Phishing" else (1 - probability)
+            is_override = result.get("allowlist_override")
 
             if verdict == "Phishing":
-                st.error(f"⚠️ Phishing Website Detected\n\nConfidence : {probability:.2%}")
+                st.error(f"⚠️ Phishing Website Detected\n\nConfidence : {confidence:.2%}")
+            elif is_override:
+                # The raw model's score is exactly what's being overridden here,
+                # so displaying it as "confidence" would be misleading — the
+                # trusted-domain match is the actual reason for this verdict.
+                st.success("✅ Legitimate Website\n\nConfidence : Verified Trusted Domain")
             else:
-                st.success(f"✅ Legitimate Website\n\nConfidence : {probability:.2%}")
+                st.success(f"✅ Legitimate Website\n\nConfidence : {confidence:.2%}")
+
+            if is_override:
+                st.info(
+                    "✅ This domain is on the trusted-site allowlist (a known major "
+                    "site), so the verdict is confirmed Legitimate regardless of the "
+                    "raw model score. The raw phishing-probability score from the ML "
+                    "model alone is still shown below in Prediction Details, for "
+                    "transparency."
+                )
 
             # Save history
             add_scan_history(user["id"], url, verdict, probability)
