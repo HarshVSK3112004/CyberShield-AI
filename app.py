@@ -177,6 +177,13 @@ def page_home():
 
 def page_login():
     st.title("🔐 Login")
+    st.caption(
+        "⚠️ This demo runs on Streamlit Community Cloud's free tier, which uses "
+        "temporary storage. If the app has been inactive for a while, it may have "
+        "restarted with a fresh, empty database — meaning previously registered "
+        "accounts (including yours) no longer exist. If login fails unexpectedly, "
+        "try registering again."
+    )
 
     if st.session_state.get("logged_in"):
         st.success(f"You're already logged in as **{st.session_state.user['username']}**.")
@@ -297,6 +304,11 @@ def page_forgot_password():
 
 def page_register():
     st.title("📝 Create an Account")
+    st.caption(
+        "⚠️ This demo's database is temporary storage on Streamlit Community Cloud's "
+        "free tier — it does not persist indefinitely, so accounts may occasionally "
+        "need to be re-created after the app has been inactive for a while."
+    )
 
     with st.form("register_form"):
         username = st.text_input("Username")
@@ -703,6 +715,21 @@ def page_about():
         This tool is built for learning purposes and should **not** be relied on as
         your sole line of defense. Always verify suspicious links through official
         channels, keep software updated, and use multi-factor authentication.
+
+        ### Known Limitation: Account Persistence on the Free-Tier Deployment
+        This demo is deployed on Streamlit Community Cloud's free tier, which runs
+        each app in a container with **temporary, non-persistent storage**. SQLite
+        (`database/database.db`) is not part of the Git repository — it's created
+        fresh by the app on startup. When the container restarts (e.g. after a
+        period of inactivity puts the app to sleep, or after a new deployment), it
+        starts from a clean copy of the repository, and that database file is
+        recreated empty. This means **registered accounts, scan history, and 2FA
+        setups do not persist indefinitely** on this hosted demo — if login
+        unexpectedly fails for a previously-working account, the most likely cause
+        is a container restart, not a bug, and re-registering resolves it. A
+        production deployment would use a persistent, externally-hosted database
+        (e.g. Postgres on Supabase/Neon/Railway) instead of local SQLite to avoid
+        this limitation entirely.
         """
     )
 
